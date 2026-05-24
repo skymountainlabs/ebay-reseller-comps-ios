@@ -1,138 +1,147 @@
-# BUILD_NOTES.md — Phase 0 Research
+# BUILD_NOTES.md — Phase 1: Xcode Scaffold + Image Search MVP
 
-**Sub-agent:** sa-ebay-reseller-comps-ios-research_engineer-d08b6a
+**Sub-agent:** sa-ebay-reseller-comps-ios-phase1-ios_engineer-b324bd
 **Date:** 2026-05-24
-**Session scope:** Phase 0 feasibility research only. No code written.
+**Branch:** subagent/sa-ebay-reseller-comps-ios-phase1-ios_engineer-b324bd
 
 ---
 
-## What Was Done
+## 1. What Was Built
 
-**wi-001 — eBay API research**
+### Project scaffold
+| File | Description |
+|------|-------------|
+| `eBayResellerComps/eBayResellerComps.xcodeproj/project.pbxproj` | Hand-authored Xcode project file. Bundle ID `com.skymountainlabs.ebayresellercomps`, iOS 17.0 deployment target, SwiftUI lifecycle, no third-party packages, `TARGETED_DEVICE_FAMILY = 1` (iPhone). |
+| `eBayResellerComps/eBayResellerComps/Info.plist` | App info plist with `NSCameraUsageDescription`, `NSPhotoLibraryUsageDescription`, and placeholder keys `eBayClientID` / `eBayClientSecret`. |
+| `eBayResellerComps/eBayResellerComps/Assets.xcassets/` | Asset catalog with AccentColor and AppIcon stubs. |
+| `eBayResellerComps/eBayResellerComps/eBayResellerCompsApp.swift` | `@main` App entry point. Initialises `SearchHistoryService` as a `@StateObject` and injects it as an environment object. Calls `load()` on appear. |
 
-Sources consulted:
-- eBay Developers Program official docs (developer.ebay.com) via WebFetch and web search
-- eBay developer community forums (multiple threads, 2024–2025)
-- eBay API deprecation announcements
+### Models
+| File | Description |
+|------|-------------|
+| `Models/ItemSummary.swift` | Codable, Identifiable struct with `itemId`, `title`, `price` (nested `Price` with `value`+`currency`), `condition: String?`. |
+| `Models/PriceSummary.swift` | Plain struct: `condition`, `count`, `average`, `median`, `min`, `max` (all `Double`). No network dependency. |
+| `Models/SearchRecord.swift` | Codable, Identifiable struct: `id UUID`, `query String`, `timestamp Date`, `imageThumbData Data?`. |
 
-Key findings documented in feasibility_report.md section 2:
-- OAuth 2.0 authorization code flow is standard and accessible to all developers
-- Browse API (active listings) available without partner status
-- Marketplace Insights API (sold/completed data) is effectively gated to approved partners
-- Finding API (previously exposed `findCompletedItems`) was decommissioned February 5, 2025
-- No open API replacement exists for sold listing data for new developers
-- Saved Searches: no API exists; `AddToWatchList` (Trading API) is the closest alternative
+### Services
+| File | Description |
+|------|-------------|
+| `Services/EBayAuthService.swift` | `@MainActor final class`. Reads `eBayClientID`/`eBayClientSecret` from `Bundle.main`. Base64-encodes `id:secret` for the `Authorization: Basic` header. POSTs `grant_type=client_credentials` to `https://api.ebay.com/identity/v1/oauth2/token`. Caches token in memory; re-fetches 60 s before expiry. No Keychain. |
+| `Services/EBayBrowseService.swift` | `final class` (not actor-isolated). Two async methods: `searchByImage(imageData:)` POSTs base64 JPEG to `search_by_image`, returns top title. `search(query:conditions:)` GETs `item_summary/search` with `q=` and optional `filter=conditions:{...}`. Delegates auth to `EBayAuthService.shared`. Pure URLSession. |
+| `Services/PriceAnalysisService.swift` | `struct`. No network. Groups `[ItemSummary]` by `condition`, filters out items with unparseable prices, computes average/median/min/max per group. Returns `[PriceSummary]` sorted alphabetically by condition. |
+| `Services/SearchHistoryService.swift` | `@MainActor final class: ObservableObject`. Persists `[SearchRecord]` to `Documents/search_history.json` via `JSONEncoder`/`JSONDecoder`. Methods: `load()`, `save(_:)` (prepends), `clearAll()`. Atomic file write. |
 
-**wi-002 — Image recognition research**
-
-Sources consulted:
-- Google Cloud Vision API official pricing pages
-- SerpAPI official pricing page (verified via direct WebFetch)
-- eBay developer documentation for searchByImage endpoint
-- General web search comparing Amazon Rekognition, Azure Vision, OpenAI Vision
-
-Key findings documented in feasibility_report.md section 3:
-- eBay's own Browse API `searchByImage` is the strongest single-step option for this use case
-- Google Cloud Vision web detection ($3.50/1,000) is a viable fallback
-- SerpAPI excluded from recommendation due to App Store policy risk (scraping-based)
-- At <1,000 monthly searches, image recognition costs are effectively zero (free tiers cover it)
-
-**wi-003 — feasibility_report.md written**
-
-All 10 required sections included. Single App Store risk register in section 9. No duplicate
-risk sections. No runnable Swift code (type sketches are struct/field outlines only).
-
-**wi-004 — BUILD_NOTES.md written** (this file)
-
-**wi-005 — Final review pass completed**
-
-Both documents reviewed. Checklist passed (see review section below).
+### Views
+| File | Description |
+|------|-------------|
+| `Views/HomeView.swift` | `NavigationStack` root. Camera/library button with loading overlay while `searchByImage` runs. Recent searches list (`ContentUnavailableView` when empty). Pushes `SearchConfirmView` via `navigationDestination`. SwiftUI Preview with two mock records. |
+| `Views/ImagePickerView.swift` | Source-selection screen with "Take Photo" (UIImagePickerController `.camera`) and "Photo Library" (`.photoLibrary`) buttons. Wraps `UIImagePickerController` via `UIViewControllerRepresentable`. No AVCaptureSession. Cancel button. SwiftUI Preview. |
+| `Views/SearchConfirmView.swift` | Thumbnail of picked image, editable `TextField` pre-filled with `suggestedQuery`, multi-select condition chips (NEW / USED / neither = Any), Search button that calls `EBayBrowseService.search`, saves `SearchRecord`, then pushes `PriceAnalysisView`. Loading and error states. SwiftUI Preview. |
+| `Views/PriceAnalysisView.swift` | Receives `[ItemSummary]`, runs `PriceAnalysisService.analyze`. Renders one rounded-rect card per condition group (condition label, listing count, avg/median/min/max). `ContentUnavailableView` when no parseable prices. SwiftUI Preview with mock data. |
 
 ---
 
-## Assumptions Made
+## 2. eBay Developer Registration Steps
 
-ASSUMPTION: eBay's Marketplace Insights API access situation described in community forum posts
-(2024–2025) reflects the current state as of May 2026. The forums consistently report rejection
-for independent developers and "partner-only" access language. This could have changed. The
-operator should verify current access policy by submitting an Application Growth Check request.
+The operator must register an app on eBay's developer portal before the app can make real API calls.
 
-ASSUMPTION: eBay supports PKCE as an additional parameter in the Authorization Code flow even
-if it is not explicitly documented. This is consistent with standard OAuth 2.0 security practices
-and widely supported by OAuth providers. The feasibility report recommends PKCE but notes that
-eBay's docs do not confirm public client (no-secret) support. The Client Secret exposure risk
-section treats this conservatively.
+### Step 1 — Create an account
+1. Go to [developer.ebay.com](https://developer.ebay.com) and sign in with (or create) an eBay account.
+2. Accept the Developers Program User Agreement.
 
-ASSUMPTION: SerpAPI's Google Lens endpoint is classified as "scraping-based" for App Store risk
-purposes. SerpAPI describes itself as proxying Google's services. Google prohibits automated
-querying of its search products. Whether App Review would definitively reject an app using
-SerpAPI is not publicly documented — this is a risk assessment, not a certainty.
+### Step 2 — Register an application
+1. In the developer portal, click **My Account → Application Keys** (or navigate to the **Application Keys** section).
+2. Click **Create an Application Key Set**.
+3. Name: `eBayResellerComps` (or any descriptive name).
+4. Platform: **Mobile** / iOS.
+5. After creation, you will see:
+   - **App ID (Client ID)** — in Sandbox and Production columns.
+   - **Cert ID (Client Secret)** — for each environment.
 
-ASSUMPTION: Pricing figures for Google Cloud Vision (label detection $1.50/1,000, web detection
-$3.50/1,000) were sourced from Google Cloud's published pricing page as of research date and
-are assumed current. Cloud pricing can change.
+### Step 3 — Paste credentials into Info.plist
+Open `eBayResellerComps/eBayResellerComps/Info.plist` and replace the placeholder values:
 
-ASSUMPTION: SerpAPI pricing tiers (verified via direct page fetch on 2026-05-24):
-Free 250/mo, Starter $25/1,000, Developer $75/5,000, Production $150/15,000. Treat as current
-at time of research; pricing plans change.
+```xml
+<key>eBayClientID</key>
+<string>YOUR_CLIENT_ID</string>        <!-- replace with App ID (Client ID) -->
+<key>eBayClientSecret</key>
+<string>YOUR_CLIENT_SECRET</string>    <!-- replace with Cert ID (Client Secret) -->
+```
 
-ASSUMPTION: The recommended architecture uses a server-side proxy for the OAuth client secret
-exchange. This adds infrastructure that was not explicitly requested. The report flags this as
-an open question for the operator to decide. If the operator accepts the risk of bundling the
-client secret in Phase 1 beta (sandbox keys only), the proxy can be deferred.
+Use **Sandbox** credentials for development/testing and **Production** credentials before App Store submission.
 
----
+### Step 4 — Start with Sandbox
+- The `searchByImage` and `search` endpoints work with the same Base URL structure in Sandbox (`api.sandbox.ebay.com`). To test against Sandbox, change the base URLs in `EBayBrowseService.swift` and the token URL in `EBayAuthService.swift` from `api.ebay.com` to `api.sandbox.ebay.com`.
+- Production credentials require eBay to review your app use case. Submit a request at **developer.ebay.com → My Account → Application Keys → Go Live**.
 
-## Unverified Claims
-
-UNVERIFIED: eBay's `searchByImage` performance across non-fashion, non-electronics categories
-(collectibles, antiques, sports memorabilia, generic household items). Empirical quality
-assessment requires a live eBay Developer account and test images. Cannot be validated in
-this research-only phase.
-
-UNVERIFIED: Whether eBay's OAuth flow supports PKCE without a client secret (public client
-mode). The docs describe a flow requiring the client secret in the token exchange. This was
-not testable without a real developer account.
-
-UNVERIFIED: Exact App Review interpretation of Guideline 4.8 for eBay OAuth login. Whether
-eBay login constitutes "third-party sign-in" triggering the Sign in with Apple requirement
-is a judgment call that only App Review can authoritatively answer.
-
-UNVERIFIED: eBay's current Application Growth Check process. The information reported in the
-feasibility report comes from developer community posts. The actual current process and
-approval criteria can only be confirmed by submitting a real request.
-
-UNVERIFIED: OpenAI GPT-4o mini per-image pricing of ~$0.003–0.005. Token counts vary by
-image resolution and complexity; this is an approximation. Current pricing should be verified
-at openai.com/api/pricing before building cost models.
+### Step 5 — searchByImage access
+The Browse API `search_by_image` endpoint may require additional enablement. If the endpoint returns 403 or "access denied":
+1. Contact eBay developer support via the portal.
+2. Mention you are building a price-research app using Browse API for active listings.
+3. Application-level (client_credentials) access is generally approved without partner status.
 
 ---
 
-## Final Review Checklist (wi-005)
+## 3. UNVERIFIED Items
 
-- [x] No duplicate App Store risk sections (single section 9 covers all risks)
-- [x] No runnable Swift code (type sketches in section 6 use field-outline format, not Swift syntax)
-- [x] All 10 report sections present (1 through 10, verified)
-- [x] Cost estimates for image API at all three volume tiers (100 / 1,000 / 10,000 — in section 3)
-- [x] Sold-listings access reality stated honestly without glossing (section 2, "The Gating Problem")
-- [x] BUILD_NOTES.md at repo root with ASSUMPTION: and UNVERIFIED: prefixes applied
+**xcodebuild is not available in this Linux Docker container.** All Swift files were authored to be correct but could not be compiled. The operator must open the project in Xcode 15+ on a Mac and run the build (⌘B) to verify.
+
+| File | Status |
+|------|--------|
+| `eBayResellerCompsApp.swift` | UNVERIFIED — not compiled |
+| `Models/ItemSummary.swift` | UNVERIFIED — not compiled |
+| `Models/PriceSummary.swift` | UNVERIFIED — not compiled |
+| `Models/SearchRecord.swift` | UNVERIFIED — not compiled |
+| `Services/EBayAuthService.swift` | UNVERIFIED — not compiled |
+| `Services/EBayBrowseService.swift` | UNVERIFIED — not compiled |
+| `Services/PriceAnalysisService.swift` | UNVERIFIED — not compiled |
+| `Services/SearchHistoryService.swift` | UNVERIFIED — not compiled |
+| `Views/HomeView.swift` | UNVERIFIED — not compiled |
+| `Views/ImagePickerView.swift` | UNVERIFIED — not compiled |
+| `Views/SearchConfirmView.swift` | UNVERIFIED — not compiled |
+| `Views/PriceAnalysisView.swift` | UNVERIFIED — not compiled |
+| `project.pbxproj` | UNVERIFIED — project file syntax hand-authored; open in Xcode to confirm it loads cleanly |
 
 ---
 
-## Unrelated Observations (Not Acted On)
+## 4. ASSUMPTION Log
 
-None. This is a fresh repository with no pre-existing code.
+**ASSUMPTION: `search_by_image` request body format.** eBay's documentation describes the body as `{"image": "<base64-encoded JPEG>"}`. This is implemented exactly as described. If the API requires a different field name or multipart encoding, `EBayBrowseService.searchByImage` will need adjustment. The response is decoded as `{"itemSummaries": [...]}`, consistent with other Browse API search endpoints.
+
+**ASSUMPTION: Conditions filter format.** The Browse API `filter` parameter for conditions is implemented as `conditions:{NEW|USED}` (pipe-delimited inside braces). This matches the documented filter format for other Browse API filter fields. If eBay's conditions filter uses a different syntax (e.g., comma-delimited), `EBayBrowseService.search` will need adjustment.
+
+**ASSUMPTION: `EBayAuthService` `@MainActor` isolation.** The work item specifies `@MainActor`-isolated. This means `EBayBrowseService` calls to `authService.validToken()` cross the main actor boundary via `await`. For Phase 1 with modest traffic this is acceptable; in a future phase, `EBayAuthService` could become a proper Swift `actor` to avoid main-thread contention.
+
+**ASSUMPTION: `ItemSummary.condition` is optional.** The Browse API may omit the condition field on some listings. `condition: String?` handles this gracefully; `PriceAnalysisService` maps nil conditions to the group key "Unknown".
+
+**ASSUMPTION: `ItemSummary.price.value` is a String-encoded decimal.** eBay's Browse API returns price as `{"value": "99.99", "currency": "USD"}`. `Double($0.price.value)` parses this; items with unparseable values are filtered out by `compactMap` in `PriceAnalysisService`.
+
+**ASSUMPTION: Single-target iPhone app.** `TARGETED_DEVICE_FAMILY = 1` targets iPhone only. iPad is excluded. If iPad support is needed in a future phase, change to `1,2`.
+
+**ASSUMPTION: No LaunchScreen storyboard.** `UILaunchScreen = {}` in Info.plist produces a plain white launch screen. This is acceptable for Phase 1.
+
+**ASSUMPTION: Camera unavailability handling.** `UIImagePickerController.isSourceTypeAvailable(.camera)` is used to disable the camera button on simulators. On a real device the camera is always available. The library button is always enabled.
 
 ---
 
-## For the Next Sub-Agent
+## 5. Known Gaps / Phase 2 Candidates
 
-Phase 1 should not begin until the operator reviews this report and decides:
-1. Whether to accept the active-listing-as-proxy approach while applying for Marketplace
-   Insights access, OR whether to pursue a different sold-data strategy.
-2. Whether to build a server-side OAuth proxy or accept client-secret-in-binary risk for
-   early development.
-3. Whether to accept the eBay searchByImage + Google Vision fallback pipeline, or use a
-   different image identification approach.
+- **Sold-listing data.** Phase 1 shows active listing prices only. Sold/completed prices require either Marketplace Insights API access (apply via eBay developer portal) or a third-party data source. This was explicitly deferred per operator decision.
+- **Sandbox vs. Production base URL switching.** Currently hard-coded to Production (`api.ebay.com`). A build-time flag (DEBUG / RELEASE) should select Sandbox vs. Production in a future phase.
+- **Keychain-backed credential storage.** Credentials are read from Info.plist (plaintext in the binary). For production, move to Keychain or a server-side token proxy.
+- **Pagination.** `EBayBrowseService.search` requests up to 50 results (eBay Browse API default page size). PriceAnalysisView shows all returned listings. Pagination was not in scope.
+- **Image thumbnail display in history.** `SearchRecord.imageThumbData` is stored but `HomeView` does not render the thumbnail in the history list (was not in the wi-006 acceptance criteria). Can be added in Phase 2.
+- **Sign in with Apple / user OAuth.** Explicitly deferred by operator; not in Phase 1.
+- **Watchlist / save feature.** Explicitly dropped; no public eBay API supports it without Trading API complexity.
+- **Marketplace Insights API.** Contingent on eBay partner approval; Phase 5 candidate per feasibility report.
+- **Unit tests.** `PriceAnalysisService` is pure computation and an ideal first test target. No tests were in scope for Phase 1.
 
-The answers to these three questions materially affect Phase 1 architecture and scope.
+---
+
+## For the Operator (Opening in Xcode)
+
+1. Open `eBayResellerComps/eBayResellerComps.xcodeproj` in Xcode 15+.
+2. Select your development team under **Signing & Capabilities** for the `eBayResellerComps` target.
+3. Build (⌘B) to verify compilation.
+4. Replace `YOUR_CLIENT_ID` and `YOUR_CLIENT_SECRET` in `Info.plist` with Sandbox credentials.
+5. Run on a real device to test camera access; Simulator will disable the camera button.

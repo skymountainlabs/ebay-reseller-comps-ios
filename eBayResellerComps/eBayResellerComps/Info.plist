@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+		<key>UISceneConfigurations</key>
+		<dict/>
+	</dict>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>NSCameraUsageDescription</key>
+	<string>Used to photograph items for eBay price research.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Used to select photos of items for eBay price research.</string>
+	<key>eBayClientID</key>
+	<string>YOUR_CLIENT_ID</string>
+	<key>eBayClientSecret</key>
+	<string>YOUR_CLIENT_SECRET</string>
+</dict>
+</plist>
